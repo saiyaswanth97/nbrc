@@ -1,4 +1,6 @@
 #!/bin/bash
+# run once --> chmod +x data_processing.sh
+# for running --> ./data_processing.sh
 
 # Set the base directory where the folders are located
 BASE_DIR="/home/rklab1/Documents/Raw_data_MRS"
