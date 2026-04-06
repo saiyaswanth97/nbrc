@@ -143,6 +143,8 @@ from oft_analysis import (
     compute_grid_analysis,
     plot_velocity_summary,
     plot_transitions,
+    plot_trajectory,
+    plot_trajectory_clean,
     draw_grid,
 )
 
@@ -175,6 +177,8 @@ grid = compute_grid_analysis(df, boundary)
 | `analysis/` | `velocity.png` | Velocity over time, cumulative distance, activity bouts |
 | `analysis/` | `velocity_hist.png` | Velocity distribution histogram |
 | `analysis/` | `transitions.png` | Grid cell over time, inner/outer zone, wall hugging |
+| `analysis/` | `trajectory.png` | Trajectory scatter on arena background with grid |
+| `analysis/` | `trajectory_clean.png` | Trajectory on clean grid (no background), start/end markers |
 | `analysis/` | `stats.json` | Velocity and distance summary |
 | `analysis/` | `transitions.json` | Zone, transition, bout, and wall hugging metrics |
 

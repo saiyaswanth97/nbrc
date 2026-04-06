@@ -112,6 +112,122 @@ def plot_transitions(time_s, grid_result, fps, out_path, grid_rows=4, grid_cols=
     plt.close()
 
 
+def plot_trajectory(bg_image, boundary, centroids_df, out_path,
+                    grid_rows=4, grid_cols=4, smooth=5):
+    """Plot 2D trajectory scatter on arena image with grid overlay.
+
+    Args:
+        bg_image: background image (full frame, BGR)
+        boundary: [[x,y], ...] 4 corners in original image coords
+        centroids_df: DataFrame with x, y, detected columns
+        out_path: output image path
+        grid_rows, grid_cols: grid dimensions
+        smooth: rolling window for smoothing centroids
+    """
+    import pandas as pd
+
+    # Draw grid on background
+    bg = bg_image.copy()
+    draw_grid(bg, boundary, grid_rows, grid_cols, color=(0, 255, 0), thickness=2)
+    bg_rgb = cv2.cvtColor(bg, cv2.COLOR_BGR2RGB)
+
+    # Get detected centroids and smooth
+    detected = centroids_df[centroids_df["detected"] == 1].copy()
+    x = pd.Series(detected["x"].values, dtype=float).rolling(smooth, center=True, min_periods=1).mean().values
+    y = pd.Series(detected["y"].values, dtype=float).rolling(smooth, center=True, min_periods=1).mean().values
+
+    # Filter to points inside boundary polygon
+    boundary_pts = np.array(boundary, dtype=np.int32)
+    inside = np.array([
+        cv2.pointPolygonTest(boundary_pts.reshape((-1, 1, 2)), (float(xi), float(yi)), False) >= 0
+        for xi, yi in zip(x, y)
+    ])
+    x, y = x[inside], y[inside]
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.imshow(bg_rgb, aspect="equal")
+    ax.scatter(x, y, c="red", s=1, alpha=0.4)
+    ax.set_xlim(0, bg_image.shape[1])
+    ax.set_ylim(bg_image.shape[0], 0)
+    ax.set_title(f"Mouse trajectory ({len(x)} points, smoothed w={smooth})")
+    ax.axis("off")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+
+def plot_trajectory_clean(boundary, centroids_df, out_path,
+                          grid_rows=4, grid_cols=4, smooth=5):
+    """Plot 2D trajectory on a clean grid (no background image).
+
+    Args:
+        boundary: [[x,y], ...] 4 corners in original image coords (TL, BL, BR, TR)
+        centroids_df: DataFrame with x, y, detected columns
+        out_path: output image path
+        grid_rows, grid_cols: grid dimensions
+        smooth: rolling window for smoothing centroids
+    """
+    import pandas as pd
+
+    tl, bl, br, tr = [np.array(p, dtype=float) for p in boundary]
+
+    def interp(p1, p2, n):
+        return [p1 + (p2 - p1) * i / n for i in range(n + 1)]
+
+    # Get detected centroids and smooth
+    detected = centroids_df[centroids_df["detected"] == 1].copy()
+    x = pd.Series(detected["x"].values, dtype=float).rolling(smooth, center=True, min_periods=1).mean().values
+    y = pd.Series(detected["y"].values, dtype=float).rolling(smooth, center=True, min_periods=1).mean().values
+
+    # Filter to points inside boundary
+    boundary_pts = np.array(boundary, dtype=np.int32)
+    inside = np.array([
+        cv2.pointPolygonTest(boundary_pts.reshape((-1, 1, 2)), (float(xi), float(yi)), False) >= 0
+        for xi, yi in zip(x, y)
+    ])
+    x, y = x[inside], y[inside]
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.set_facecolor("white")
+
+    # Draw boundary
+    poly = plt.Polygon([tl, bl, br, tr], fill=False, edgecolor="gray", linewidth=2)
+    ax.add_patch(poly)
+
+    # Draw grid lines
+    left = interp(tl, bl, grid_rows)
+    right = interp(tr, br, grid_rows)
+    for i in range(1, grid_rows):
+        ax.plot([left[i][0], right[i][0]], [left[i][1], right[i][1]], color="gray", linewidth=0.8)
+
+    top = interp(tl, tr, grid_cols)
+    bottom = interp(bl, br, grid_cols)
+    for i in range(1, grid_cols):
+        ax.plot([top[i][0], bottom[i][0]], [top[i][1], bottom[i][1]], color="gray", linewidth=0.8)
+
+    # Plot trajectory
+    ax.scatter(x, y, c="red", s=1, alpha=0.4)
+
+    # Start marker (blue square) and end marker (blue circle)
+    if len(x) > 0:
+        ax.scatter(x[0], y[0], marker="s", c="blue", s=100, zorder=5, label="Start")
+        ax.scatter(x[-1], y[-1], marker="o", c="blue", s=100, zorder=5, label="End")
+        ax.legend(loc="upper right", fontsize=10)
+
+    # Set limits with padding
+    all_x = np.array([p[0] for p in [tl, bl, br, tr]])
+    all_y = np.array([p[1] for p in [tl, bl, br, tr]])
+    pad = 30
+    ax.set_xlim(all_x.min() - pad, all_x.max() + pad)
+    ax.set_ylim(all_y.max() + pad, all_y.min() - pad)
+    ax.set_aspect("equal")
+    ax.set_title(f"Mouse trajectory ({len(x)} points)")
+    ax.axis("off")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+
 def draw_grid(image, boundary, grid_rows=4, grid_cols=4, color=(0, 255, 0), thickness=1):
     """Draw arena boundary and grid on image."""
     tl, bl, br, tr = boundary

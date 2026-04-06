@@ -25,7 +25,7 @@ import cv2
 
 from .tracking import track_video
 from .analysis import compute_velocity, compute_activity, compute_grid_analysis
-from .plotting import plot_velocity_summary, plot_velocity_histogram, plot_transitions, draw_grid
+from .plotting import plot_velocity_summary, plot_velocity_histogram, plot_transitions, plot_trajectory, plot_trajectory_clean, draw_grid
 from .io import save_tracking_results, load_tracking_results, save_sample_frames
 
 
@@ -91,6 +91,20 @@ def cmd_analyze(args):
                         os.path.join(out_dir, "transitions.png"),
                         grid_rows, grid_cols)
         print(f"Saved: {os.path.join(out_dir, 'transitions.png')}")
+
+        # Trajectory plot
+        sample_path = os.path.join(args.optflow_dir, "samples", "original.png")
+        if os.path.exists(sample_path):
+            bg_img = cv2.imread(sample_path)
+            plot_trajectory(bg_img, boundary, df,
+                           os.path.join(out_dir, "trajectory.png"),
+                           grid_rows, grid_cols, smooth=args.smooth)
+            print(f"Saved: {os.path.join(out_dir, 'trajectory.png')}")
+
+        plot_trajectory_clean(boundary, df,
+                             os.path.join(out_dir, "trajectory_clean.png"),
+                             grid_rows, grid_cols, smooth=args.smooth)
+        print(f"Saved: {os.path.join(out_dir, 'trajectory_clean.png')}")
 
         # Save metrics
         metrics = {**grid_result["metrics"], **activity}
