@@ -61,7 +61,20 @@ def cmd_analyze(args):
     x = df["x"].values.astype(float)
     y = df["y"].values.astype(float)
 
+    # px -> mm scale based on boundary edge length (arena = 1000x1000 mm)
+    ARENA_EDGE_MM = 1000.0
+    px_per_mm = None
+    if args.boundary:
+        bpts = np.array(parse_coords(args.boundary), dtype=float)
+        edges = np.linalg.norm(np.diff(np.vstack([bpts, bpts[:1]]), axis=0), axis=1)
+        mean_edge_px = float(edges.mean())
+        px_per_mm = mean_edge_px / ARENA_EDGE_MM
+    scale = (1.0 / px_per_mm) if px_per_mm else 1.0
+    unit = "mm" if px_per_mm else "px"
+
     velocity, displacement = compute_velocity(x, y, fps)
+    velocity *= scale
+    displacement = displacement * scale
     velocity_smooth = pd.Series(velocity).rolling(
         window=args.smooth, center=True, min_periods=1
     ).mean().values
@@ -70,10 +83,10 @@ def cmd_analyze(args):
     activity = compute_activity(velocity_smooth, fps, threshold=args.activity_threshold)
 
     plot_velocity_summary(time_s, velocity_smooth, displacement, activity,
-                         os.path.join(out_dir, "velocity.png"), args.smooth)
+                         os.path.join(out_dir, "velocity.png"), args.smooth, unit=unit)
     print(f"Saved: {os.path.join(out_dir, 'velocity.png')}")
 
-    plot_velocity_histogram(velocity_smooth, os.path.join(out_dir, "velocity_hist.png"))
+    plot_velocity_histogram(velocity_smooth, os.path.join(out_dir, "velocity_hist.png"), unit=unit)
     print(f"Saved: {os.path.join(out_dir, 'velocity_hist.png')}")
 
     # Grid analysis
@@ -119,10 +132,11 @@ def cmd_analyze(args):
         "total_frames": len(df),
         "duration_s": float(time_s.iloc[-1]),
         "fps": fps,
-        "total_distance_px": float(np.sum(displacement)),
-        "mean_velocity_px_s": float(np.mean(valid_vel)),
-        "median_velocity_px_s": float(np.median(valid_vel)),
-        "max_velocity_px_s": float(np.max(valid_vel)),
+        "unit": unit,
+        f"total_distance_{unit}": float(np.sum(displacement)),
+        f"mean_velocity_{unit}_s": float(np.mean(valid_vel)),
+        f"median_velocity_{unit}_s": float(np.median(valid_vel)),
+        f"max_velocity_{unit}_s": float(np.max(valid_vel)),
         "time_moving_pct": float(np.mean(activity["active_mask"]) * 100),
         "time_still_pct": float((1 - np.mean(activity["active_mask"])) * 100),
     }
@@ -131,8 +145,8 @@ def cmd_analyze(args):
     print(f"Saved: {os.path.join(out_dir, 'stats.json')}")
 
     print(f"\nDuration: {stats['duration_s']:.1f}s")
-    print(f"Total distance: {stats['total_distance_px']:.0f} px")
-    print(f"Mean velocity: {stats['mean_velocity_px_s']:.0f} px/s")
+    print(f"Total distance: {stats[f'total_distance_{unit}']:.0f} {unit}")
+    print(f"Mean velocity: {stats[f'mean_velocity_{unit}_s']:.0f} {unit}/s")
     print(f"Moving: {stats['time_moving_pct']:.1f}% | Still: {stats['time_still_pct']:.1f}%")
 
 
@@ -217,7 +231,7 @@ def cmd_batch(args):
             boundary=cfg.get("boundary"),
             grid=cfg.get("grid", "4x4"),
             wall_threshold=cfg.get("wall_threshold", 0.05),
-            activity_threshold=cfg.get("activity_threshold", 20.0),
+            activity_threshold=cfg.get("activity_threshold", 10.0),
         )
 
         t0 = time.time()
@@ -272,7 +286,7 @@ def cmd_init(args):
         "video_dir": video_dir,
         "grid": "4x4",
         "smooth": 30,
-        "activity_threshold": 20.0,
+        "activity_threshold": 10.0,
         "wall_threshold": 0.05,
         "videos": [],
     }
@@ -314,7 +328,7 @@ def main():
     p_analyze.add_argument("--boundary", help="Grid boundary: x1,y1,x2,y2,... (cropped coords)")
     p_analyze.add_argument("--grid", default="4x4", help="Grid ROWSxCOLS (default: 4x4)")
     p_analyze.add_argument("--wall-threshold", type=float, default=0.05, help="Wall hug threshold (default: 0.05)")
-    p_analyze.add_argument("--activity-threshold", type=float, default=20.0, help="Velocity threshold for moving/rest in px/s (default: 20.0)")
+    p_analyze.add_argument("--activity-threshold", type=float, default=10.0, help="Velocity threshold for moving/rest in mm/s (default: 10.0)")
 
     # Full
     p_full = sub.add_parser("full", help="Track + analyze")

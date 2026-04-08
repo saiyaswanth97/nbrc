@@ -8,13 +8,13 @@ import matplotlib.pyplot as plt
 
 
 def plot_velocity_summary(time_s, velocity_smooth, displacement, activity, out_path,
-                          smooth_window=5):
+                          smooth_window=5, unit="px"):
     """Plot velocity, cumulative distance, and activity."""
     fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
 
     # Velocity
     axes[0].plot(time_s, velocity_smooth, color="steelblue", linewidth=0.5)
-    axes[0].set_ylabel("Velocity (px/s)")
+    axes[0].set_ylabel(f"Velocity ({unit}/s)")
     axes[0].set_title(f"Velocity over time (smoothed, window={smooth_window})")
     med = np.nanmedian(velocity_smooth)
     axes[0].axhline(med, color="red", linestyle="--", alpha=0.5, label=f"median={med:.0f}")
@@ -23,8 +23,8 @@ def plot_velocity_summary(time_s, velocity_smooth, displacement, activity, out_p
     # Cumulative distance
     cum_dist = np.cumsum(displacement)
     axes[1].plot(time_s, cum_dist, color="green", linewidth=1)
-    axes[1].set_ylabel("Cumulative distance (px)")
-    axes[1].set_title(f"Total distance: {cum_dist[-1]:.0f} px")
+    axes[1].set_ylabel(f"Cumulative distance ({unit})")
+    axes[1].set_title(f"Total distance: {cum_dist[-1]:.0f} {unit}")
 
     # Activity
     active = activity["active_mask"]
@@ -45,14 +45,14 @@ def plot_velocity_summary(time_s, velocity_smooth, displacement, activity, out_p
     plt.close()
 
 
-def plot_velocity_histogram(velocity_smooth, out_path):
+def plot_velocity_histogram(velocity_smooth, out_path, unit="px"):
     """Plot velocity distribution histogram."""
     valid = velocity_smooth[~np.isnan(velocity_smooth)]
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.hist(valid, bins=50, color="steelblue", edgecolor="white")
     ax.axvline(np.median(valid), color="red", linestyle="--", label=f"median={np.median(valid):.0f}")
     ax.axvline(np.mean(valid), color="orange", linestyle="--", label=f"mean={np.mean(valid):.0f}")
-    ax.set_xlabel("Velocity (px/s)")
+    ax.set_xlabel(f"Velocity ({unit}/s)")
     ax.set_ylabel("Count")
     ax.set_title("Velocity distribution")
     ax.legend()
