@@ -1,0 +1,23 @@
+{
+  "video_dir": "/media/smummaneni/External/nbrc/OFT (27_03)",
+  "grid": "4x4",
+  "smooth": 30,
+  "activity_threshold": 20.0,
+  "wall_threshold": 0.05,
+  "videos": [
+    { "file": "C1R1.mp4", "start": null, "end": null, "polygon": "249,74,314,953,1171,896,1138,37", "boundary": "405,178,452,838,1097,794,1067,149" },
+    { "file": "C1R2.mp4", "start": null, "end": null, "polygon": "249,74,314,953,1171,896,1138,37", "boundary": "405,178,452,838,1097,794,1067,149" },
+    { "file": "C1R3.mp4", "start": null, "end": null, "polygon": "242,93,332,971,1188,894,1132,37", "boundary": "403,194,465,852,1109,793,1064,149" },
+    { "file": "C2R1.mp4", "start": null, "end": null, "polygon": "242,93,332,971,1188,894,1132,37", "boundary": "403,194,465,852,1109,793,1064,149" },
+    { "file": "C3R1.mp4", "start": null, "end": null, "polygon": "242,93,332,971,1188,894,1132,37", "boundary": "403,194,465,852,1109,793,1064,149" },
+    { "file": "C3R2.mp4", "start": null, "end": null, "polygon": "242,93,332,971,1188,894,1132,37", "boundary": "403,194,465,852,1109,793,1064,149" },
+    { "file": "C3R3.mp4", "start": null, "end": null, "polygon": "242,93,332,971,1188,894,1132,37", "boundary": "403,194,465,852,1109,793,1064,149" },
+    { "file": "C4R1.mp4", "start": null, "end": null, "polygon": "242,93,332,971,1188,894,1132,37", "boundary": "403,194,465,852,1109,793,1064,149" },
+    { "file": "C4R2.mp4", "start": null, "end": null, "polygon": "242,93,332,971,1188,894,1132,37", "boundary": "403,194,465,852,1109,793,1064,149" },
+    { "file": "C4R3.mp4", "start": null, "end": null, "polygon": "242,93,332,971,1188,894,1132,37", "boundary": "403,194,465,852,1109,793,1064,149" },
+    { "file": "C5R1.mp4", "start": null, "end": null, "polygon": "248,98,322,976,1178,912,1138,55", "boundary": "405,197,458,856,1101,806,1067,163" },
+    { "file": "C5R2.mp4", "start": null, "end": null, "polygon": "248,98,322,976,1178,912,1138,55", "boundary": "405,197,458,856,1101,806,1067,163" },
+    { "file": "C6R1.mp4", "start": null, "end": null, "polygon": "255,88,316,969,1176,913,1143,55", "boundary": "410,189,456,848,1099,806,1073,162" },
+    { "file": "C6R2.mp4", "start": null, "end": null, "polygon": "242,77,315,954,1172,895,1133,37", "boundary": "401,181,451,837,1097,793,1064,148" }
+  ]
+}
