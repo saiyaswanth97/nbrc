@@ -1,0 +1,7 @@
+opencv-python-headless
+numpy
+pandas
+matplotlib
+scipy
+# The interactive `pick` GUI needs an interactive matplotlib backend.
+# On Linux that means system Tk: `sudo apt install python3-tk`.

@@ -1,0 +1,10 @@
+{
+  "video_dir": "/home/smummaneni/nbrc/data",
+  "smooth": 30,
+  "activity_threshold": 20.0,
+  "periphery_threshold": 0.65,
+  "arena_diameter_mm": 920.0,
+  "videos": [
+    { "file": "c1r1.mp4", "start": null, "end": null, "edge_points": null, "target_quadrant": null }
+  ]
+}
