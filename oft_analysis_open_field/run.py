@@ -307,6 +307,27 @@ def cmd_init(args):
     print(f"  python -m oft_analysis batch {out_path}")
 
 
+def cmd_annotate(args):
+    """Launch the interactive GUI to click polygon + boundary corners for each video."""
+    from .gui import annotate_config
+    only = args.videos.split(",") if args.videos else None
+    annotate_config(args.config, only=only, redo=args.redo)
+
+
+def cmd_review(args):
+    """Step through annotated videos to verify / correct the corners (GUI)."""
+    from .gui import review_config
+    only = args.videos.split(",") if args.videos else None
+    review_config(args.config, only=only, all_videos=args.all)
+
+
+def cmd_auto(args):
+    """Propagate hand-annotated corners to the remaining videos via image registration."""
+    from .autoannotate import auto_annotate
+    refs = args.refs.split(",") if args.refs else ()
+    auto_annotate(args.config, min_inliers=args.min_inliers, evaluate=args.evaluate, ref_configs=refs)
+
+
 def main():
     parser = argparse.ArgumentParser(description="OFT Analysis Pipeline")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -353,6 +374,25 @@ def main():
     p_sample = sub.add_parser("sample", help="Extract middle frame from each video for manual annotation")
     p_sample.add_argument("config", help="Path to JSON config file")
 
+    # Annotate (GUI)
+    p_annotate = sub.add_parser("annotate", help="Click polygon + boundary corners per video (GUI)")
+    p_annotate.add_argument("config", help="Path to JSON config file")
+    p_annotate.add_argument("--videos", help="Comma-separated subset, e.g. c1r1,c2r1")
+    p_annotate.add_argument("--redo", action="store_true", help="Re-annotate videos already done")
+
+    # Review (GUI)
+    p_review = sub.add_parser("review", help="Verify/correct annotated corners per video (GUI)")
+    p_review.add_argument("config", help="Path to JSON config file")
+    p_review.add_argument("--videos", help="Comma-separated subset, e.g. c1r1,c2r1")
+    p_review.add_argument("--all", action="store_true", help="Include videos already verified")
+
+    # Auto-annotate
+    p_auto = sub.add_parser("auto", help="Propagate annotated corners to remaining videos")
+    p_auto.add_argument("config", help="Path to JSON config file")
+    p_auto.add_argument("--min-inliers", type=int, default=50, help="Min RANSAC inliers to accept (default: 50)")
+    p_auto.add_argument("--evaluate", action="store_true", help="Leave-one-out accuracy check on hand-annotated videos")
+    p_auto.add_argument("--refs", help="Other config(s), comma-separated, whose hand annotations are used as references")
+
     # Init config
     p_init = sub.add_parser("init", help="Generate template config for a video directory")
     p_init.add_argument("video_dir", help="Directory containing .mp4 files")
@@ -369,6 +409,7 @@ def main():
     cmds = {
         "track": cmd_track, "analyze": cmd_analyze, "full": cmd_full,
         "grid": cmd_grid, "batch": cmd_batch, "sample": cmd_sample, "init": cmd_init,
+        "annotate": cmd_annotate, "auto": cmd_auto, "review": cmd_review,
     }
     cmds[args.command](args)
 
