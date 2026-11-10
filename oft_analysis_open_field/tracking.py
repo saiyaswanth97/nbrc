@@ -16,8 +16,13 @@ def make_polygon_mask(polygon, h, w):
     return mask
 
 
-def build_background(cap, n_samples=200):
-    """Build median background model from sampled frames."""
+def build_background(cap, n_samples=200, percentile=50):
+    """Build background model as a per-pixel percentile of sampled frames.
+
+    The median (50) fails when the animal sits in one spot for most of the video: it
+    gets baked into the background. For a bright animal on a dark floor a low
+    percentile (e.g. 10) removes it unless it stays put for >90% of the samples.
+    """
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frames = []
     for idx in np.linspace(0, total - 1, n_samples, dtype=int):
@@ -26,7 +31,7 @@ def build_background(cap, n_samples=200):
         if ret:
             frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-    return np.median(np.stack(frames), axis=0).astype(np.uint8)
+    return np.percentile(np.stack(frames), percentile, axis=0).astype(np.uint8)
 
 
 def detect_mouse(gray, bg, roi_mask, roi_bounds, kernel,
@@ -116,7 +121,8 @@ def interpolate_centroids(centroids, max_gap=10):
 
 
 def track_video(video_path, crop=None, polygon=None, pad=60, max_gap=10,
-                area_min_ratio=0.4, start_s=None, end_s=None, progress_every=2000):
+                area_min_ratio=0.4, start_s=None, end_s=None, progress_every=2000,
+                bg_percentile=10):
     """Track mouse through entire video.
 
     Args:
@@ -129,6 +135,7 @@ def track_video(video_path, crop=None, polygon=None, pad=60, max_gap=10,
         start_s: start time in seconds (trim beginning)
         end_s: end time in seconds (trim end, negative = from end)
         progress_every: print progress every N frames
+        bg_percentile: background percentile (10 = bright animal on dark floor, 50 = median)
 
     Returns:
         dict with keys: centroids, bboxes, metadata
@@ -179,7 +186,7 @@ def track_video(video_path, crop=None, polygon=None, pad=60, max_gap=10,
     roi_mask_crop = roi_mask[roi_bounds[1]:roi_bounds[3], roi_bounds[0]:roi_bounds[2]]
 
     print(f"Building background model...")
-    bg = build_background(cap, n_samples=200)
+    bg = build_background(cap, n_samples=200, percentile=bg_percentile)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
 
     print(f"Tracking {total_to_track} frames...")

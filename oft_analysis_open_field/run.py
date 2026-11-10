@@ -24,7 +24,7 @@ import glob
 import cv2
 
 from .tracking import track_video
-from .analysis import compute_velocity, compute_activity, compute_grid_analysis
+from .analysis import kalman_smooth, compute_path, compute_activity, compute_grid_analysis
 from .plotting import plot_velocity_summary, plot_velocity_histogram, plot_transitions, plot_trajectory, plot_trajectory_clean, draw_grid
 from .io import save_tracking_results, load_tracking_results, save_sample_frames
 
@@ -35,6 +35,15 @@ def parse_coords(s):
     return [[coords[i], coords[i+1]] for i in range(0, len(coords), 2)]
 
 
+def video_output_dir(args):
+    """<output_dir>/<name> if an output dir is set, else <video_dir>/optflow/<name>."""
+    name = os.path.splitext(os.path.basename(args.video))[0]
+    base = getattr(args, "output_dir", None)
+    if base:
+        return os.path.join(os.path.expanduser(base), name)
+    return os.path.join(os.path.dirname(os.path.abspath(args.video)), "optflow", name)
+
+
 def cmd_track(args):
     polygon = parse_coords(args.polygon) if args.polygon else None
     crop = [int(x) for x in args.crop.split(",")] if args.crop else None
@@ -42,11 +51,10 @@ def cmd_track(args):
     end_s = getattr(args, 'end', None)
 
     results = track_video(args.video, crop=crop, polygon=polygon, pad=args.pad,
-                          start_s=start_s, end_s=end_s)
+                          start_s=start_s, end_s=end_s,
+                          bg_percentile=getattr(args, "bg_percentile", 10))
 
-    video_dir = os.path.dirname(os.path.abspath(args.video))
-    name = os.path.splitext(os.path.basename(args.video))[0]
-    out_dir = os.path.join(video_dir, "optflow", name)
+    out_dir = video_output_dir(args)
 
     save_tracking_results(results, out_dir, save_frames=True, every=args.every)
     print(f"\nOutput: {out_dir}")
@@ -57,6 +65,16 @@ def cmd_analyze(args):
     fps = data["fps"]
     out_dir = os.path.join(args.optflow_dir, "analysis")
     os.makedirs(out_dir, exist_ok=True)
+
+    # Analysis window: start once the animal has been seen continuously for 1 s
+    # (skips placement), then keep duration_s seconds (None = to the end).
+    det = df["x"].notna().values
+    win = max(1, int(round(fps)))
+    run = np.convolve(det.astype(int), np.ones(win), "valid")
+    start = int(np.argmax(run >= win)) if (run >= win).any() else 0
+    dur = getattr(args, "duration_s", None)
+    end = len(df) if not dur else min(len(df), start + int(round(dur * fps)))
+    df = df.iloc[start:end].reset_index(drop=True)
 
     x = df["x"].values.astype(float)
     y = df["y"].values.astype(float)
@@ -72,12 +90,20 @@ def cmd_analyze(args):
     scale = (1.0 / px_per_mm) if px_per_mm else 1.0
     unit = "mm" if px_per_mm else "px"
 
-    velocity, displacement = compute_velocity(x, y, fps)
-    velocity *= scale
+    # Kalman-smooth positions (bridges gaps, rejects ghost-detection jumps), then
+    # measure movement with a minimum step so stationary wobble isn't counted.
+    ppm = px_per_mm or 1.0
+    x, y = kalman_smooth(x, y, fps,
+                         meas_std=getattr(args, "kalman_meas_mm", 11.0) * ppm,
+                         accel_std=getattr(args, "kalman_accel_mm", 1100.0) * ppm)
+    raw_detection_pct = float(df["detected"].fillna(0).mean() * 100)
+    df = df.assign(x=x, y=y, detected=(~np.isnan(x)).astype(float))
+    min_step_px = getattr(args, "min_step_mm", 20.0) * ppm
+    # Speed over a fixed 1 s window, so videos recorded at different frame rates compare
+    speed_window = max(3, int(round(fps * getattr(args, "speed_window_s", 1.0))))
+    velocity_smooth, displacement = compute_path(x, y, fps, min_step_px, speed_window)
+    velocity_smooth = velocity_smooth * scale
     displacement = displacement * scale
-    velocity_smooth = pd.Series(velocity).rolling(
-        window=args.smooth, center=True, min_periods=1
-    ).mean().values
     time_s = df["frame"] / fps
 
     activity = compute_activity(velocity_smooth, fps, threshold=args.activity_threshold)
@@ -130,7 +156,8 @@ def cmd_analyze(args):
     valid_vel = velocity_smooth[~np.isnan(velocity_smooth)]
     stats = {
         "total_frames": len(df),
-        "duration_s": float(time_s.iloc[-1]),
+        "duration_s": float(len(df) / fps),
+        "start_s": float(start / fps),
         "fps": fps,
         "unit": unit,
         f"total_distance_{unit}": float(np.sum(displacement)),
@@ -139,6 +166,7 @@ def cmd_analyze(args):
         f"max_velocity_{unit}_s": float(np.max(valid_vel)),
         "time_moving_pct": float(np.mean(activity["active_mask"]) * 100),
         "time_still_pct": float((1 - np.mean(activity["active_mask"])) * 100),
+        "raw_detection_pct": raw_detection_pct,
     }
     with open(os.path.join(out_dir, "stats.json"), "w") as f:
         json.dump(stats, f, indent=2)
@@ -153,9 +181,7 @@ def cmd_analyze(args):
 def cmd_full(args):
     """Run track + analyze."""
     cmd_track(args)
-    video_dir = os.path.dirname(os.path.abspath(args.video))
-    name = os.path.splitext(os.path.basename(args.video))[0]
-    args.optflow_dir = os.path.join(video_dir, "optflow", name)
+    args.optflow_dir = video_output_dir(args)
 
     # Save sample frames
     data, _ = load_tracking_results(args.optflow_dir)
@@ -232,16 +258,109 @@ def cmd_batch(args):
             grid=cfg.get("grid", "4x4"),
             wall_threshold=cfg.get("wall_threshold", 0.05),
             activity_threshold=cfg.get("activity_threshold", 10.0),
+            duration_s=cfg.get("duration_s"),
+            bg_percentile=cfg.get("bg_percentile", 10),
+            min_step_mm=cfg.get("min_step_mm", 20.0),
+            kalman_meas_mm=cfg.get("kalman_meas_mm", 11.0),
+            kalman_accel_mm=cfg.get("kalman_accel_mm", 1100.0),
+            output_dir=cfg.get("output_dir"),
         )
 
         t0 = time.time()
-        cmd_full(ns)
+        if getattr(args, "analyze_only", False):
+            ns.optflow_dir = video_output_dir(ns)
+            cmd_analyze(ns)
+        else:
+            cmd_full(ns)
         elapsed = time.time() - t0
         total_elapsed = time.time() - start_all
         remaining = (total_elapsed / (idx + 1)) * (len(videos) - idx - 1)
         print(f"  Done in {elapsed:.0f}s | Elapsed: {total_elapsed/60:.1f}min | Remaining: ~{remaining/60:.0f}min")
 
     print(f"\n===== ALL DONE in {(time.time()-start_all)/60:.1f} min =====")
+    write_summary(args.config)
+
+
+def rat_group(name, groups):
+    """Group for a rat named like 'c12r3' (cage 12, rat 3).
+
+    groups: {"control": [3, 5, 12, 13], "default": "CUMS"} — cages listed under a
+    group name belong to it, every other cage gets the default. Names without a
+    cage number (e.g. unrenamed WIN_... files) are 'unknown'.
+    """
+    import re
+    if not groups:
+        return None
+    m = re.match(r"c(\d+)r\d+", name, re.IGNORECASE)
+    if not m:
+        return "unknown"
+    cage = int(m.group(1))
+    for g, cages in groups.items():
+        if g != "default" and cage in cages:
+            return g
+    return groups.get("default", "other")
+
+
+def write_group_summary(df, out_path, skip=()):
+    """Per-group mean, SEM and n for every numeric column, plus a Mann-Whitney U
+    p-value when there are exactly two groups. Descriptive: no multiple-comparison
+    correction."""
+    from scipy.stats import mannwhitneyu
+    df = df[df["group"].notna() & (df["group"] != "unknown")]
+    groups = sorted(df["group"].unique())
+    if not groups:
+        return
+    num = [c for c in df.select_dtypes("number").columns if c not in skip]
+    rows = []
+    for c in num:
+        row = {"metric": c}
+        vals = {}
+        for g in groups:
+            v = df.loc[df["group"] == g, c].dropna()
+            vals[g] = v
+            row[f"{g}_mean"] = v.mean()
+            row[f"{g}_sem"] = v.sem()
+            row[f"{g}_n"] = len(v)
+        if len(groups) == 2 and all(len(vals[g]) >= 2 for g in groups):
+            row["mannwhitney_p"] = mannwhitneyu(vals[groups[0]], vals[groups[1]]).pvalue
+        rows.append(row)
+    pd.DataFrame(rows).to_csv(out_path, index=False)
+    print(f"Group summary: {out_path}")
+
+
+def write_summary(config_path):
+    """Collect every video's stats.json + transitions.json into one CSV."""
+    with open(config_path) as f:
+        config = json.load(f)
+    video_dir = config.get("video_dir", os.path.dirname(os.path.abspath(config_path)))
+    base = config.get("output_dir")
+    base = os.path.expanduser(base) if base else os.path.join(video_dir, "optflow")
+
+    rows = []
+    for v in config.get("videos", []):
+        name = os.path.splitext(v["file"])[0]
+        row = {"video": name}
+        for fname in ("stats.json", "transitions.json"):
+            path = os.path.join(base, name, "analysis", fname)
+            if os.path.exists(path):
+                with open(path) as f:
+                    row.update({k: val for k, val in json.load(f).items()
+                                if not isinstance(val, (list, dict))})
+        group = rat_group(name, config.get("groups"))
+        if group:
+            row = {"video": name, "group": group, **{k: v for k, v in row.items() if k != "video"}}
+        rows.append(row)
+    out = os.path.join(base, "oft_summary.csv")
+    df = pd.DataFrame(rows)
+    df.to_csv(out, index=False)
+    print(f"Summary: {out}")
+    if "group" in df:
+        write_group_summary(df, os.path.join(base, "oft_group_summary.csv"),
+                            skip=("total_frames", "fps", "wall_threshold", "threshold", "duration_s"))
+
+
+def cmd_summary(args):
+    write_summary(args.config)
 
 
 def cmd_sample(args):
@@ -369,6 +488,8 @@ def main():
     # Batch
     p_batch = sub.add_parser("batch", help="Run full pipeline on all videos from config file")
     p_batch.add_argument("config", help="Path to JSON config file")
+    p_batch.add_argument("--analyze-only", action="store_true",
+                         help="Re-run analysis on existing tracking results (skip tracking)")
 
     # Sample frames
     p_sample = sub.add_parser("sample", help="Extract middle frame from each video for manual annotation")
@@ -385,6 +506,10 @@ def main():
     p_review.add_argument("config", help="Path to JSON config file")
     p_review.add_argument("--videos", help="Comma-separated subset, e.g. c1r1,c2r1")
     p_review.add_argument("--all", action="store_true", help="Include videos already verified")
+
+    # Summary CSV
+    p_summary = sub.add_parser("summary", help="Collect per-video results into one CSV")
+    p_summary.add_argument("config", help="Path to JSON config file")
 
     # Auto-annotate
     p_auto = sub.add_parser("auto", help="Propagate annotated corners to remaining videos")
@@ -409,7 +534,7 @@ def main():
     cmds = {
         "track": cmd_track, "analyze": cmd_analyze, "full": cmd_full,
         "grid": cmd_grid, "batch": cmd_batch, "sample": cmd_sample, "init": cmd_init,
-        "annotate": cmd_annotate, "auto": cmd_auto, "review": cmd_review,
+        "annotate": cmd_annotate, "auto": cmd_auto, "review": cmd_review, "summary": cmd_summary,
     }
     cmds[args.command](args)
 

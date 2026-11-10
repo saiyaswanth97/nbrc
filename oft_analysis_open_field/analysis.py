@@ -46,6 +46,114 @@ def compute_velocity(x, y, fps, windows=(1, 2, 3, 5)):
     return velocity, displacement
 
 
+def kalman_smooth(x, y, fps, meas_std=4.0, accel_std=1500.0, gate=16.0, max_reject=5,
+                  max_gap_s=1.0):
+    """Constant-velocity Kalman filter + RTS smoother on centroid tracks (pixel units).
+
+    Missing frames (NaN) are predicted through. Detections whose squared Mahalanobis
+    distance from the prediction exceeds ``gate`` (chi2, 2 dof) are treated as outliers
+    (e.g. ghost detections); after ``max_reject`` consecutive rejections the filter
+    re-initialises on the measurement so a genuine fast move can't lock it out.
+    Output is NaN before the first detection, after the last one, and inside gaps
+    longer than ``max_gap_s``: the model would only be extrapolating there.
+    """
+    n = len(x)
+    dt = 1.0 / fps
+    F = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]], float)
+    H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], float)
+    g = np.array([[dt**2 / 2, 0], [0, dt**2 / 2], [dt, 0], [0, dt]])
+    Q = g @ g.T * accel_std**2
+    R = np.eye(2) * meas_std**2
+
+    xs_f = np.full((n, 4), np.nan)
+    Ps_f = np.zeros((n, 4, 4))
+    xs_p = np.full((n, 4), np.nan)
+    Ps_p = np.zeros((n, 4, 4))
+
+    first = np.flatnonzero(~np.isnan(x))
+    if len(first) == 0:
+        return x.copy(), y.copy()
+    s = first[0]
+    state = np.array([x[s], y[s], 0.0, 0.0])
+    P = np.diag([meas_std**2, meas_std**2, 500.0**2, 500.0**2])
+    rejects = 0
+    for i in range(s, n):
+        if i > s:
+            state = F @ state
+            P = F @ P @ F.T + Q
+        xs_p[i], Ps_p[i] = state, P
+        if not np.isnan(x[i]):
+            z = np.array([x[i], y[i]])
+            innov = z - H @ state
+            S = H @ P @ H.T + R
+            d2 = innov @ np.linalg.solve(S, innov)
+            if d2 <= gate or rejects >= max_reject:
+                if d2 > gate:  # re-initialise after repeated rejections
+                    state = np.array([z[0], z[1], 0.0, 0.0])
+                    P = np.diag([meas_std**2, meas_std**2, 500.0**2, 500.0**2])
+                else:
+                    K = P @ H.T @ np.linalg.inv(S)
+                    state = state + K @ innov
+                    P = (np.eye(4) - K @ H) @ P
+                rejects = 0
+            else:
+                rejects += 1
+        xs_f[i], Ps_f[i] = state, P
+
+    # Rauch-Tung-Striebel backward pass
+    xs = xs_f.copy()
+    for i in range(n - 2, s - 1, -1):
+        C = Ps_f[i] @ F.T @ np.linalg.inv(Ps_p[i + 1])
+        xs[i] = xs_f[i] + C @ (xs[i + 1] - xs_p[i + 1])
+
+    # Don't report extrapolated positions outside the observed track or across long gaps
+    valid = ~np.isnan(x)
+    keep = np.zeros(n, bool)
+    obs = np.flatnonzero(valid)
+    keep[obs[0]:obs[-1] + 1] = True
+    max_gap = int(round(max_gap_s * fps))
+    gap_start = None
+    for i in range(obs[0], obs[-1] + 1):
+        if not valid[i] and gap_start is None:
+            gap_start = i
+        elif valid[i] and gap_start is not None:
+            if i - gap_start > max_gap:
+                keep[gap_start:i] = False
+            gap_start = None
+    xs[~keep] = np.nan
+    return xs[:, 0], xs[:, 1]
+
+
+def compute_path(x, y, fps, min_step, speed_window):
+    """Jitter-robust distance and speed from smoothed positions.
+
+    Distance only accumulates once the animal has moved ``min_step`` away from the
+    last counted point, so stationary centroid wobble adds nothing.
+    Speed is the centered displacement over ``speed_window`` frames.
+
+    Returns (speed, displacement): per-frame speed and per-frame counted step.
+    """
+    n = len(x)
+    displacement = np.zeros(n)
+    ax = ay = None
+    for i in range(n):
+        if np.isnan(x[i]):
+            continue
+        if ax is None:
+            ax, ay = x[i], y[i]
+            continue
+        step = np.hypot(x[i] - ax, y[i] - ay)
+        if step >= min_step:
+            displacement[i] = step
+            ax, ay = x[i], y[i]
+
+    h = max(1, speed_window // 2)
+    speed = np.full(n, np.nan)
+    if n > 2 * h:
+        speed[h:-h] = np.hypot(x[2 * h:] - x[:-2 * h], y[2 * h:] - y[:-2 * h]) / (2 * h) * fps
+    return speed, displacement
+
+
 def count_bouts(mask):
     """Count contiguous True bouts. Returns (n_bouts, list of durations in frames)."""
     bouts = []
@@ -71,7 +179,7 @@ def compute_activity(velocity_smooth, fps, threshold=20.0):
         fps: frames per second
         threshold: absolute velocity threshold (px/s) below which mouse is "resting"
     """
-    active = velocity_smooth > threshold
+    active = np.nan_to_num(velocity_smooth, nan=0.0) > threshold
 
     n_move, move_durs = count_bouts(active)
     n_rest, rest_durs = count_bouts(~active)
